@@ -1,59 +1,115 @@
 import { useRef, useEffect, useState, useCallback } from "react";
 import { Canvas } from "@react-three/fiber";
-import { loadModel, detect as yoloDetect } from "./yolo";
 import { loadHandModel, detectHands, processResults, drawHands } from "./hands";
 import { HoloScene } from "./scene/HoloScene";
 
-const COLORS = [
-  "#00d4ff", "#ff3b8b", "#00ff88", "#ffaa00", "#aa55ff",
-  "#ff5555", "#55ffff", "#ffff55", "#ff55ff", "#55ff55",
-];
-
-const SMOOTHING = 0.75;
-
-function getColor(label) {
-  let hash = 0;
-  for (let i = 0; i < label.length; i++) hash = label.charCodeAt(i) + ((hash << 5) - hash);
-  return COLORS[Math.abs(hash) % COLORS.length];
-}
-
-function lerp(a, b, t) {
-  return a + (b - a) * t;
-}
+// Detect if we should use WebSocket backend (Pi mode) or browser camera
+const WS_URL = "ws://localhost:9200";
 
 export default function App() {
   const videoRef = useRef(null);
+  const feedImgRef = useRef(null);
   const canvasRef = useRef(null);
   const animRef = useRef(null);
-  const yoloReady = useRef(false);
   const handsReady = useRef(false);
-  const yoloFrameCount = useRef(0);
-  const lastYoloPredictions = useRef([]);
-  const smoothedBoxes = useRef(new Map());
   const gestureRef = useRef([]);
-  const [loadStatus, setLoadStatus] = useState("Loading models...");
-  const [cameraReady, setCameraReady] = useState(false);
+  const wsRef = useRef(null);
 
-  // UI state — updated throttled, not every frame
-  const [objects, setObjects] = useState([]);
+  const [loadStatus, setLoadStatus] = useState("Connecting...");
+  const [cameraReady, setCameraReady] = useState(false);
+  const [mode, setMode] = useState(null); // "browser" or "backend"
   const [handsCount, setHandsCount] = useState(0);
   const [gestureDisplay, setGestureDisplay] = useState([]);
   const uiUpdateCounter = useRef(0);
 
+  // Try WebSocket first, fall back to browser camera
   useEffect(() => {
     let cancelled = false;
-    Promise.all([
-      // YOLO disabled for performance — hand tracking + 3D only
-      // loadModel().then(() => { if (!cancelled) yoloReady.current = true; }),
-      loadHandModel().then(() => { if (!cancelled) handsReady.current = true; }),
-    ])
-      .then(() => { if (!cancelled) setLoadStatus("ready"); })
-      .catch(() => setLoadStatus("Failed to load models"));
-    return () => { cancelled = true; };
+    let ws = null;
+
+    function tryWebSocket() {
+      ws = new WebSocket(WS_URL);
+      wsRef.current = ws;
+
+      const timeout = setTimeout(() => {
+        // WebSocket didn't connect in 2s, fall back to browser
+        ws.close();
+        if (!cancelled) startBrowserMode();
+      }, 2000);
+
+      ws.onopen = () => {
+        clearTimeout(timeout);
+        if (!cancelled) {
+          setMode("backend");
+          setLoadStatus("ready");
+          console.log("Connected to Pi backend");
+        }
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+
+          // Update camera frame
+          if (data.frame && feedImgRef.current) {
+            feedImgRef.current.src = data.frame;
+          }
+
+          // Update gesture data
+          const gestures = data.gestures || [];
+          gestureRef.current = gestures;
+
+          // Throttled UI updates
+          uiUpdateCounter.current++;
+          if (uiUpdateCounter.current % 3 === 0) {
+            setHandsCount(data.hands?.length || 0);
+            setGestureDisplay(gestures.map((g) => ({
+              hand: g.hand,
+              gesture: g.gesture,
+              action: g.action,
+            })));
+          }
+        } catch {}
+      };
+
+      ws.onclose = () => {
+        clearTimeout(timeout);
+        if (!cancelled && !mode) startBrowserMode();
+      };
+
+      ws.onerror = () => {
+        clearTimeout(timeout);
+        ws.close();
+      };
+    }
+
+    async function startBrowserMode() {
+      if (cancelled) return;
+      setMode("browser");
+      setLoadStatus("Loading models...");
+
+      try {
+        await loadHandModel();
+        handsReady.current = true;
+        if (!cancelled) setLoadStatus("ready");
+      } catch {
+        if (!cancelled) setLoadStatus("Failed to load models");
+      }
+    }
+
+    tryWebSocket();
+
+    return () => {
+      cancelled = true;
+      if (ws) ws.close();
+    };
   }, []);
 
+  // Start browser camera (only in browser mode)
   useEffect(() => {
+    if (mode !== "browser") return;
     let stream = null;
+
     async function startCamera() {
       try {
         stream = await navigator.mediaDevices.getUserMedia({
@@ -68,60 +124,14 @@ export default function App() {
         setLoadStatus("Camera access denied");
       }
     }
+
     startCamera();
     return () => {
       if (stream) stream.getTracks().forEach((t) => t.stop());
     };
-  }, []);
+  }, [mode]);
 
-  const drawYoloBoxes = useCallback((ctx, predictions, canvasWidth) => {
-    const currentKeys = new Set();
-    const speed = 1 - SMOOTHING;
-    const detectedObjects = [];
-
-    for (const pred of predictions) {
-      const [x, y, w, h] = pred.bbox;
-      const mx = canvasWidth - x - w;
-      const key = pred.class;
-      currentKeys.add(key);
-      detectedObjects.push(`${pred.class} ${Math.round(pred.score * 100)}%`);
-
-      const target = { x: mx, y, w, h };
-      const prev = smoothedBoxes.current.get(key);
-      let smooth;
-      if (prev) {
-        smooth = {
-          x: lerp(prev.x, target.x, speed),
-          y: lerp(prev.y, target.y, speed),
-          w: lerp(prev.w, target.w, speed),
-          h: lerp(prev.h, target.h, speed),
-        };
-      } else {
-        smooth = target;
-      }
-      smoothedBoxes.current.set(key, smooth);
-
-      const color = getColor(pred.class);
-      const label = `${pred.class} ${Math.round(pred.score * 100)}%`;
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2;
-      ctx.strokeRect(smooth.x, smooth.y, smooth.w, smooth.h);
-      ctx.font = "13px Inter, system-ui, sans-serif";
-      const textWidth = ctx.measureText(label).width;
-      const labelY = smooth.y > 26 ? smooth.y - 4 : smooth.y + smooth.h + 18;
-      const bgY = smooth.y > 26 ? smooth.y - 24 : smooth.y + smooth.h;
-      ctx.fillStyle = color;
-      ctx.fillRect(smooth.x, bgY, textWidth + 12, 22);
-      ctx.fillStyle = "#000";
-      ctx.fillText(label, smooth.x + 6, labelY);
-    }
-
-    for (const key of smoothedBoxes.current.keys()) {
-      if (!currentKeys.has(key)) smoothedBoxes.current.delete(key);
-    }
-    return detectedObjects;
-  }, []);
-
+  // Browser-mode detection loop
   const detect = useCallback(async () => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
@@ -136,11 +146,6 @@ export default function App() {
     const ctx = canvas.getContext("2d");
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // YOLO disabled — too heavy alongside hand tracking + 3D
-    // TODO: re-enable when we move YOLO to a web worker
-    let detectedObjects = null;
-
-    // Hand tracking every frame — write to ref, not state
     let numHands = 0;
     let gestureResults = [];
     if (handsReady.current) {
@@ -153,13 +158,10 @@ export default function App() {
       }
     }
 
-    // Update ref immediately (3D scene reads this)
     gestureRef.current = gestureResults;
 
-    // Update UI state only every 5th frame to avoid re-render spam
     uiUpdateCounter.current++;
     if (uiUpdateCounter.current % 5 === 0) {
-      if (detectedObjects) setObjects(detectedObjects);
       setHandsCount(numHands);
       setGestureDisplay(gestureResults.map((g) => ({
         hand: g.hand,
@@ -169,17 +171,18 @@ export default function App() {
     }
 
     animRef.current = requestAnimationFrame(detect);
-  }, [drawYoloBoxes]);
+  }, []);
 
+  // Start browser detection loop when ready
   useEffect(() => {
-    if (cameraReady && (yoloReady.current || handsReady.current)) {
+    if (mode === "browser" && cameraReady && handsReady.current) {
       setLoadStatus("ready");
       animRef.current = requestAnimationFrame(detect);
     }
     return () => {
       if (animRef.current) cancelAnimationFrame(animRef.current);
     };
-  }, [cameraReady, detect]);
+  }, [cameraReady, detect, mode]);
 
   const isRunning = loadStatus === "ready";
 
@@ -196,7 +199,7 @@ export default function App() {
         <HoloScene gestureRef={gestureRef} />
       </Canvas>
 
-      {/* Camera feed — bottom right, larger */}
+      {/* Camera feed — bottom right */}
       <div
         style={{
           position: "absolute",
@@ -211,30 +214,47 @@ export default function App() {
         }}
       >
         <div style={{ position: "relative" }}>
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            muted
-            style={{
-              display: "block",
-              width: "100%",
-              borderRadius: "8px",
-              transform: "scaleX(-1)",
-              filter: "grayscale(1) contrast(1.1)",
-            }}
-          />
-          <canvas
-            ref={canvasRef}
-            style={{
-              position: "absolute",
-              top: 0,
-              left: 0,
-              width: "100%",
-              height: "100%",
-              pointerEvents: "none",
-            }}
-          />
+          {mode === "browser" ? (
+            <>
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                style={{
+                  display: "block",
+                  width: "100%",
+                  borderRadius: "8px",
+                  transform: "scaleX(-1)",
+                  filter: "grayscale(1) contrast(1.1)",
+                }}
+              />
+              <canvas
+                ref={canvasRef}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  width: "100%",
+                  height: "100%",
+                  pointerEvents: "none",
+                }}
+              />
+            </>
+          ) : (
+            <img
+              ref={feedImgRef}
+              alt=""
+              style={{
+                display: "block",
+                width: "100%",
+                borderRadius: "8px",
+                filter: "grayscale(1) contrast(1.1)",
+                minHeight: "270px",
+                background: "#111",
+              }}
+            />
+          )}
           <div
             style={{
               position: "absolute",
@@ -247,7 +267,7 @@ export default function App() {
               textTransform: "uppercase",
             }}
           >
-            LIVE
+            {mode === "backend" ? "PI FEED" : "LIVE"}
           </div>
         </div>
       </div>
@@ -281,18 +301,17 @@ export default function App() {
 
         {isRunning && (
           <>
-            <div style={{
-              background: "rgba(0,0,0,0.5)",
-              padding: "6px 12px",
-              borderRadius: "4px",
-              color: objects.length > 0 ? "#999" : "#444",
-              borderLeft: "2px solid #555",
-            }}>
-              {objects.length > 0
-                ? `${objects.length} object${objects.length !== 1 ? "s" : ""}: ${objects.join(", ")}`
-                : "No objects"
-              }
-            </div>
+            {mode === "backend" && (
+              <div style={{
+                background: "rgba(0,0,0,0.5)",
+                padding: "6px 12px",
+                borderRadius: "4px",
+                color: "#555",
+                borderLeft: "2px solid #333",
+              }}>
+                Pi Backend
+              </div>
+            )}
 
             <div style={{
               background: "rgba(0,0,0,0.5)",
