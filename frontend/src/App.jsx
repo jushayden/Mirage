@@ -1,5 +1,6 @@
 import { useRef, useEffect, useState, useCallback } from "react";
 import { Canvas } from "@react-three/fiber";
+import { EffectComposer, Bloom, Vignette } from "@react-three/postprocessing";
 import { loadHandModel, detectHands, processResults, drawHands } from "./hands";
 import { HoloScene } from "./scene/HoloScene";
 
@@ -195,9 +196,41 @@ export default function App() {
         style={{ position: "absolute", inset: 0 }}
         frameloop="always"
       >
-        <color attach="background" args={["#050505"]} />
+        <color attach="background" args={["#030508"]} />
         <HoloScene gestureRef={gestureRef} />
+        <EffectComposer>
+          <Bloom
+            intensity={0.8}
+            luminanceThreshold={0.2}
+            luminanceSmoothing={0.9}
+            mipmapBlur
+          />
+          <Vignette eskil={false} offset={0.3} darkness={0.85} />
+        </EffectComposer>
       </Canvas>
+
+      {/* Scanline overlay */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          pointerEvents: "none",
+          backgroundImage: "repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,20,40,0.04) 2px, rgba(0,20,40,0.04) 4px)",
+          zIndex: 1,
+        }}
+      />
+
+      {/* Noise/grain overlay */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          pointerEvents: "none",
+          opacity: 0.03,
+          background: "url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMDAiIGhlaWdodD0iMzAwIj48ZmlsdGVyIGlkPSJuIj48ZmVUdXJidWxlbmNlIHR5cGU9ImZyYWN0YWxOb2lzZSIgYmFzZUZyZXF1ZW5jeT0iMC43IiBudW1PY3RhdmVzPSI0IiBzdGl0Y2hUaWxlcz0ic3RpdGNoIi8+PC9maWx0ZXI+PHJlY3Qgd2lkdGg9IjEwMCUiIGhlaWdodD0iMTAwJSIgZmlsdGVyPSJ1cmwoI24pIi8+PC9zdmc+)",
+          zIndex: 1,
+        }}
+      />
 
       {/* Camera feed — bottom right */}
       <div
@@ -208,8 +241,8 @@ export default function App() {
           width: "480px",
           borderRadius: "8px",
           overflow: "hidden",
-          border: "1px solid rgba(255,255,255,0.12)",
-          boxShadow: "0 4px 24px rgba(0,0,0,0.6)",
+          border: "1px solid rgba(100,180,255,0.15)",
+          boxShadow: "0 4px 24px rgba(0,0,0,0.6), 0 0 15px rgba(80,160,255,0.08)",
           zIndex: 10,
         }}
       >
@@ -263,7 +296,7 @@ export default function App() {
               fontSize: "9px",
               fontFamily: "Inter, system-ui, sans-serif",
               letterSpacing: "2px",
-              color: "rgba(255,255,255,0.5)",
+              color: "rgba(100,180,255,0.5)",
               textTransform: "uppercase",
             }}
           >
@@ -303,22 +336,22 @@ export default function App() {
           <>
             {mode === "backend" && (
               <div style={{
-                background: "rgba(0,0,0,0.5)",
+                background: "rgba(0,8,16,0.6)",
                 padding: "6px 12px",
                 borderRadius: "4px",
-                color: "#555",
-                borderLeft: "2px solid #333",
+                color: "#4488aa",
+                borderLeft: "2px solid #2a5566",
               }}>
                 Pi Backend
               </div>
             )}
 
             <div style={{
-              background: "rgba(0,0,0,0.5)",
+              background: "rgba(0,8,16,0.6)",
               padding: "6px 12px",
               borderRadius: "4px",
-              color: handsCount > 0 ? "#ccc" : "#444",
-              borderLeft: `2px solid ${handsCount > 0 ? "#fff" : "#333"}`,
+              color: handsCount > 0 ? "#88ccee" : "#334455",
+              borderLeft: `2px solid ${handsCount > 0 ? "#5599bb" : "#1a2a33"}`,
             }}>
               {handsCount > 0
                 ? `${handsCount} hand${handsCount !== 1 ? "s" : ""}`
@@ -328,11 +361,11 @@ export default function App() {
 
             {gestureDisplay.length > 0 && (
               <div style={{
-                background: "rgba(0,0,0,0.5)",
+                background: "rgba(0,8,16,0.6)",
                 padding: "6px 12px",
                 borderRadius: "4px",
-                color: "#fff",
-                borderLeft: "2px solid #fff",
+                color: "#aaddff",
+                borderLeft: "2px solid #5599cc",
               }}>
                 {gestureDisplay.map((g) =>
                   `${g.hand}: ${g.gesture}${g.action ? ` → ${g.action}` : ""}`

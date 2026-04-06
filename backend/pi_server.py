@@ -176,7 +176,7 @@ class MirageBackend:
 
     def _gesture_to_action(self, gesture, pinch_amount):
         actions = {
-            "open palm": "dismiss",
+            "open palm": None,
             "fist": "grab",
             "point up": "cursor",
             "thumbs up": "confirm",

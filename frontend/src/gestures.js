@@ -75,7 +75,7 @@ function detectSwipe(state, now) {
 const ACTION_MAP = {
   "pinch":       "select",
   "pinch release": "release",
-  "open palm":   "dismiss",
+  "open palm":   null,
   "fist":        "grab",
   "point up":    "cursor",
   "peace":       null,
