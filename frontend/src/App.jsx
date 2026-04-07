@@ -2,6 +2,7 @@ import { useRef, useEffect, useState, useCallback } from "react";
 import { Canvas } from "@react-three/fiber";
 import { EffectComposer, Bloom, Vignette } from "@react-three/postprocessing";
 import { loadHandModel, detectHands, processResults, drawHands } from "./hands";
+import { loadModel as loadYolo, sendFrame, getResults as getYoloResults, isReady as isYoloReady } from "./yolo";
 import { HoloScene } from "./scene/HoloScene";
 
 // Detect if we should use WebSocket backend (Pi mode) or browser camera
@@ -21,7 +22,9 @@ export default function App() {
   const [mode, setMode] = useState(null); // "browser" or "backend"
   const [handsCount, setHandsCount] = useState(0);
   const [gestureDisplay, setGestureDisplay] = useState([]);
+  const [objects, setObjects] = useState([]);
   const uiUpdateCounter = useRef(0);
+  const yoloFrameCounter = useRef(0);
 
   // Try WebSocket first, fall back to browser camera
   useEffect(() => {
@@ -87,7 +90,7 @@ export default function App() {
     async function startBrowserMode() {
       if (cancelled) return;
       setMode("browser");
-      setLoadStatus("Loading models...");
+      setLoadStatus("Loading hand tracking...");
 
       try {
         await loadHandModel();
@@ -96,6 +99,11 @@ export default function App() {
       } catch {
         if (!cancelled) setLoadStatus("Failed to load models");
       }
+
+      // Load YOLO in background — non-blocking, doesn't delay startup
+      loadYolo()
+        .then(() => console.log("YOLO ready (Web Worker)"))
+        .catch(() => console.warn("YOLO failed to load — continuing without object detection"));
     }
 
     tryWebSocket();
@@ -161,6 +169,31 @@ export default function App() {
 
     gestureRef.current = gestureResults;
 
+    // YOLO — send frame to worker every 10th frame (non-blocking)
+    if (isYoloReady()) {
+      yoloFrameCounter.current++;
+      if (yoloFrameCounter.current % 10 === 0) {
+        sendFrame(video);
+      }
+
+      // Draw latest YOLO results (from previous worker response)
+      const yoloPreds = getYoloResults();
+      if (yoloPreds.length > 0) {
+        for (const pred of yoloPreds) {
+          const [x, y, w, h] = pred.bbox;
+          const mx = canvas.width - x - w;
+          ctx.strokeStyle = "rgba(100,180,255,0.4)";
+          ctx.lineWidth = 1;
+          ctx.strokeRect(mx, y, w, h);
+
+          const label = `${pred.class} ${Math.round(pred.score * 100)}%`;
+          ctx.font = "10px Inter, system-ui, sans-serif";
+          ctx.fillStyle = "rgba(100,180,255,0.5)";
+          ctx.fillText(label, mx + 4, y > 14 ? y - 4 : y + h + 12);
+        }
+      }
+    }
+
     uiUpdateCounter.current++;
     if (uiUpdateCounter.current % 5 === 0) {
       setHandsCount(numHands);
@@ -169,6 +202,9 @@ export default function App() {
         gesture: g.gesture,
         action: g.action,
       })));
+      if (isYoloReady()) {
+        setObjects(getYoloResults().map((p) => `${p.class} ${Math.round(p.score * 100)}%`));
+      }
     }
 
     animRef.current = requestAnimationFrame(detect);
@@ -370,6 +406,19 @@ export default function App() {
                 {gestureDisplay.map((g) =>
                   `${g.hand}: ${g.gesture}${g.action ? ` → ${g.action}` : ""}`
                 ).join(" | ")}
+              </div>
+            )}
+
+            {objects.length > 0 && (
+              <div style={{
+                background: "rgba(0,8,16,0.6)",
+                padding: "6px 12px",
+                borderRadius: "4px",
+                color: "#6699aa",
+                borderLeft: "2px solid #334d55",
+                fontSize: "10px",
+              }}>
+                {objects.length} object{objects.length !== 1 ? "s" : ""}: {objects.join(", ")}
               </div>
             )}
           </>

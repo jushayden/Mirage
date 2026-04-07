@@ -1,8 +1,9 @@
 node_modules/
 dist/
 .vite/
-*.onnx
-*.task
 *.pt
+# Models downloaded at build time (see scripts/download-models.js)
+# yolov8n.onnx is committed because no public download URL exists
+*.task
 .env
 .DS_Store
