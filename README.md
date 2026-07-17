@@ -1,13 +1,13 @@
 # Mirage
 
-A gesture-controlled holographic UI. Your hands drive a 3D scene — no mouse, no controller. Hand tracking runs either in the browser from your webcam or on a Raspberry Pi camera that streams gestures over WebSocket.
+A gesture-controlled holographic UI: your hands drive a 3D scene, tracked either in the browser from your webcam or on a Raspberry Pi camera that streams gestures over WebSocket.
 
 ## What it does
 
 - **Hand-tracked 3D** — MediaPipe hand landmarks drive a Three.js holographic scene: a hand cursor, pinch-to-grab, and dual-hand interaction.
 - **In-browser object detection** — a YOLO model runs on ONNX Runtime Web inside a Web Worker, so live detection adds no lag to the UI.
 - **Two modes** — *browser mode* tracks hands locally from the webcam; *Pi mode* offloads tracking to a Raspberry Pi backend that broadcasts gestures over WebSocket.
-- Sound design and bloom post-processing for the holographic feel.
+- Sound design and bloom post-processing.
 
 ## Stack
 
